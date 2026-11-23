@@ -10,6 +10,7 @@ pipeline {
 
     environment {
         DOCKERHUB_NAMESPACE = 'harisca03'
+        GITOPS_REPO = 'https://github.com/Haris-ca/kubernetes-demo-gitops.git'
     }
 
     stages {
@@ -91,11 +92,77 @@ pipeline {
                 }
             }
         }
+
+        stage('Update GitOps Repository') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-gitops-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+                    dir('gitops') {
+                        sh '''
+                            set -eu
+                            set +x
+
+                            echo "Cloning GitOps repository..."
+
+                            git clone --branch main "$GITOPS_REPO" .
+
+                            echo "Updating Kubernetes image tags..."
+
+                            sed -i -E \
+                              "s|(image: ${DOCKERHUB_NAMESPACE}/admin:).*|\\1${BUILD_NUMBER}|" \
+                              shoplite/admin-deployment.yaml
+
+                            sed -i -E \
+                              "s|(image: ${DOCKERHUB_NAMESPACE}/frontend:).*|\\1${BUILD_NUMBER}|" \
+                              shoplite/frontend-deployment.yaml
+
+                            sed -i -E \
+                              "s|(image: ${DOCKERHUB_NAMESPACE}/backend:).*|\\1${BUILD_NUMBER}|" \
+                              shoplite/backend-deployment.yaml
+
+                            echo "Updated image references:"
+                            grep -n 'image:' shoplite/*deployment.yaml
+
+                            git config user.name "Jenkins CI"
+                            git config user.email "jenkins@example.com"
+
+                            git add shoplite/*deployment.yaml
+
+                            git commit -m "Update Shoplite images to build ${BUILD_NUMBER}"
+
+                            cat > .git-askpass.sh <<'EOF'
+#!/bin/sh
+case "$1" in
+    *Username*) echo "$GIT_USER" ;;
+    *Password*) echo "$GIT_TOKEN" ;;
+esac
+EOF
+
+                            chmod 700 .git-askpass.sh
+                            trap 'rm -f .git-askpass.sh' EXIT
+
+                            export GIT_ASKPASS="$PWD/.git-askpass.sh"
+                            export GIT_TERMINAL_PROMPT=0
+
+                            echo "Pushing changes to GitOps repository..."
+                            git push origin main
+
+                            echo "GitOps repository updated successfully!"
+                        '''
+                    }
+                }
+            }
+        }
     }
 
     post {
         success {
-            echo 'All three microservice images pushed successfully!'
+            echo 'CI successful! Images pushed and GitOps manifests updated.'
         }
 
         failure {
