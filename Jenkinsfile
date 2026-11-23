@@ -103,6 +103,7 @@ pipeline {
                     )
                 ]) {
                     dir('gitops') {
+                        deleteDir()
                         sh '''
                             set -eu
                             set +x
